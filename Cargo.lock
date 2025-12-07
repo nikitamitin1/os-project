@@ -10,7 +10,7 @@ checksum = "7bdfddac270bbdd45903296bc1caf29a7fdce6b326aaf0bbab7f04c5f98b7447"
 
 [[package]]
 name = "os-project"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "bootloader",
 ]
