@@ -6,7 +6,6 @@
 
 /// Parse an integer from an ASCII string slice.
 ///
-/// # TODO
 /// * Decide whether to support optional `+`/`-` signs.
 /// * Handle decimal digits only (hex/bin support can come later).
 /// * Validate that every character is a digit before converting.

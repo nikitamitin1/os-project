@@ -5,8 +5,8 @@ mod vga_buffer;
 mod keyboard;
 mod shell;
 mod parser;
-
-use crate::shell::Shell;
+mod history;
+mod simple_string;
 use core::panic::PanicInfo;
 use bootloader::{entry_point, BootInfo};
 

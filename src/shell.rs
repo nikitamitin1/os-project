@@ -1,10 +1,10 @@
 use crate::{
     keyboard,
     parser::{int_to_str_buf, parse_int_from_str, ParseError},
+    simple_string::FixedString,
     vga_buffer::{self, get_color_code, Color},
 };
 use core::hint::spin_loop;
-use crate::vga_buffer::write_byte;
 
 const INPUT_BUFFER_LEN: usize = 128;
 
@@ -194,32 +194,11 @@ impl Shell {
     fn execute_command<'a>(&self, command: CommandToExecute<'a>) -> CommandResult {
         match command {
             CommandToExecute::Greet { name } => {
-                let mut buf = [0u8; 64];
-                let mut len = 0;
-
-                for &byte in b"Hello, " {
-                    buf[len] = byte;
-                    len += 1;
-                }
-
-                for &byte in name.as_bytes() {
-                    if len >= buf.len() {
-                        break;
-                    }
-                    buf[len] = byte;
-                    len += 1;
-                }
-
-                if len + 2 <= buf.len() {
-                    buf[len] = b'!';
-                    len += 1;
-                    buf[len] = b'\n';
-                    len += 1;
-                }
-
-                if let Ok(msg) = core::str::from_utf8(&buf[..len]) {
-                    print_command_output(msg);
-                }
+                let mut msg = FixedString::<64>::new();
+                let _ = msg.push_str("Hello, ");
+                let _ = msg.push_str(name);
+                let _ = msg.push_str("!\n");
+                print_command_output(msg.as_str());
                 CommandResult::Success
             }
             CommandToExecute::Sum { a, b } => {
