@@ -12,7 +12,24 @@
 /// * Validate that every character is a digit before converting.
 /// * Return either the parsed integer or an error describing why parsing failed.
 
-use crate::vga_buffer;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseError {
+    InvalidDigit,
+    EmptyInput,
+    InvalidSign,
+    BufferTooSmall,
+}
+
+impl ParseError {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ParseError::InvalidDigit => "input contains a non-digit character",
+            ParseError::EmptyInput => "input string is empty",
+            ParseError::InvalidSign => "invalid sign placement",
+            ParseError::BufferTooSmall => "buffer too small for conversion",
+        }
+    }
+}
 
 pub fn parse_int_from_str(_s: &str) -> Result<i64, ParseError> {
     let bytes = _s.as_bytes();
@@ -49,45 +66,31 @@ pub fn parse_int_from_str(_s: &str) -> Result<i64, ParseError> {
 /// * Avoid using `format!` – build the string manually for practice.
 /// * Decide whether to trim/keep leading zeros.
 /// * Consider reusing buffers instead of allocating each call (optional).
-pub fn int_to_string(_value: i64) -> Result<usize, ParseError> {
-    if _value == 0 {
-        Ok(b'0' as usize)
+pub fn int_to_str_buf(value: i64, buf: &mut [u8]) -> Result<&str, ParseError> {
+    if value == 0 {
+        if buf.is_empty() { return Err(ParseError::BufferTooSmall); }
+        buf[0] = b'0';
+        return Ok(core::str::from_utf8(&buf[..1]).unwrap());
     }
 
-    else {
-        let mut value = _value;
-        let mut buffer = [0u8; 20]; // Enough for i64
-        let mut index = 0;
+    let negative = value < 0;
+    let mut n = if negative { value.wrapping_neg() as u64 } else { value as u64 };
 
-        if value < 0 {
-            value = -value;
-            // Handle negative sign if needed
-        }
+    let mut i = 0;
+    while n > 0 {
+        if i >= buf.len() { return Err(ParseError::BufferTooSmall); }
+        let digit = (n % 10) as u8;
+        buf[i] = b'0' + digit;
+        n /= 10;
+        i += 1;
+    }
 
-        while value > 0 {
-            let digit = (value % 10) as u8;
-            buffer[index] = b'0' + digit;
-            index += 1;
-            value /= 10;
-        }
+    if negative {
+        if i >= buf.len() { return Err(ParseError::BufferTooSmall); }
+        buf[i] = b'-';
+        i += 1;
+    }
 
-        // Reverse the buffer to get the correct order
-        for i in 0..index / 2 {
-            buffer.swap(i, index - 1 - i);
-        }
-
-        Ok(buffer.len())
+    buf[..i].reverse();
+    Ok(core::str::from_utf8(&buf[..i]).unwrap())
 }
-
-/// Minimal error type for the parsing helpers above.
-///
-/// # TODO
-/// * Extend with more variants once you know the edge cases you want
-///   to catch (overflow, empty string, invalid digit, etc.).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParseError {
-    InvalidDigit,
-    EmptyInput,
-    InvalidSign
-}
-

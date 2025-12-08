@@ -197,6 +197,32 @@ impl Writer {
             }
         }
     }
+
+    fn backspace(&mut self) {
+        if self.row == 0 && self.column == 0 {
+            return;
+        }
+
+        if self.column == 0 {
+            if self.row > 0 {
+                self.row -= 1;
+                self.column = BUFFER_WIDTH;
+            }
+        }
+
+        if self.column > 0 {
+            self.column -= 1;
+        }
+
+        let buffer_ptr = self.buffer;
+        unsafe {
+            (*buffer_ptr).chars[self.row][self.column] = ScreenChar {
+                ascii_character: b' ',
+                color_code: self.color_code,
+            };
+        }
+        self.set_cursor_position();
+    }
 }
 
 struct GlobalWriter(UnsafeCell<Writer>);
@@ -228,5 +254,12 @@ pub fn write_byte(byte: u8, color_code: ColorCode) {
     WRITER.with(|writer| {
         writer.color_code = color_code;
         writer.write_byte(byte);
+    });
+}
+
+pub fn backspace(color_code: ColorCode) {
+    WRITER.with(|writer| {
+        writer.color_code = color_code;
+        writer.backspace();
     });
 }

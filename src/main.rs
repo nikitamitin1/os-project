@@ -1,12 +1,12 @@
 #![no_std]
 #![no_main]
-extern crate alloc;
 
 mod vga_buffer;
 mod keyboard;
 mod shell;
 mod parser;
 
+use crate::shell::Shell;
 use core::panic::PanicInfo;
 use bootloader::{entry_point, BootInfo};
 
@@ -20,10 +20,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 entry_point!(kernel_main);
 
 fn kernel_main(_boot_info: &'static BootInfo) -> ! {
-    shell::print_on_entry("Version is VERSION");
-    loop {
-        }
-    }
+    shell::bootstrap(VERSION);
+}
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
