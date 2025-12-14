@@ -1,43 +1,71 @@
-use core::arch::asm;
+use core::cell::UnsafeCell;
+use x86_64::instructions::interrupts;
 
-use crate::vga_buffer;
-use crate::vga_buffer::{get_color_code, Color};
+const SCANCODE_QUEUE_CAPACITY: usize = 256;
 
-const KBD_DATA_PORT: u16 = 0x60;
-const KBD_STATUS_PORT: u16 = 0x64;
-
-unsafe fn inb(port: u16) -> u8 {
-    let value: u8;
-    asm!(
-    "in al, dx",
-    in("dx") port,
-    out("al") value,
-    options(nomem, nostack, preserves_flags),
-    );
-    value
+struct ScancodeQueue {
+    buffer: [u8; SCANCODE_QUEUE_CAPACITY],
+    head: usize,
+    tail: usize,
+    len: usize,
 }
 
-unsafe fn outb(port: u16, value: u8) {
-    asm!(
-    "out dx, al",
-    in("dx") port,
-    in("al") value,
-    options(nomem, nostack, preserves_flags),
-    );
-}
-
-unsafe fn keyboard_has_data() -> bool {
-    let status = inb(KBD_STATUS_PORT);
-    (status & 0x01) != 0 // if one we have byte for reading
-}
-
-unsafe fn read_scancode() -> u8 {
-    while !keyboard_has_data(){
+impl ScancodeQueue {
+    const fn new() -> Self {
+        Self {
+            buffer: [0; SCANCODE_QUEUE_CAPACITY],
+            head: 0,
+            tail: 0,
+            len: 0,
+        }
     }
-    inb(KBD_DATA_PORT)
+
+    fn push(&mut self, scancode: u8) {
+        if self.len == SCANCODE_QUEUE_CAPACITY {
+            return;
+        }
+        self.buffer[self.head] = scancode;
+        self.head = (self.head + 1) % SCANCODE_QUEUE_CAPACITY;
+        self.len += 1;
+    }
+
+    fn pop(&mut self) -> Option<u8> {
+        if self.len == 0 {
+            return None;
+        }
+
+        let byte = self.buffer[self.tail];
+        self.tail = (self.tail + 1) % SCANCODE_QUEUE_CAPACITY;
+        self.len -= 1;
+        Some(byte)
+    }
 }
 
-pub fn read_scancode_safe() -> u8 {
-    unsafe {read_scancode()}
+struct SharedQueue(UnsafeCell<ScancodeQueue>);
+
+impl SharedQueue {
+    const fn new() -> Self {
+        Self(UnsafeCell::new(ScancodeQueue::new()))
+    }
+
+    fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ScancodeQueue) -> R,
+    {
+        interrupts::without_interrupts(|| unsafe { f(&mut *self.0.get()) })
+    }
 }
 
+unsafe impl Sync for SharedQueue {}
+
+static QUEUE: SharedQueue = SharedQueue::new();
+
+/// Called from the keyboard interrupt handler to enqueue the latest scancode.
+pub fn push_scancode(scancode: u8) {
+    QUEUE.with(|queue| queue.push(scancode));
+}
+
+/// Pops the next pending scancode if available.
+pub fn pop_scancode() -> Option<u8> {
+    QUEUE.with(|queue| queue.pop())
+}

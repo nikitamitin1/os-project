@@ -10,6 +10,7 @@ pub enum FixedStringError {
 }
 
 /// `FixedString<N>` stores at most `N` bytes of UTF-8 text without heap allocations.
+#[derive(Clone)]
 pub struct FixedString<const N: usize> {
     buf: [u8; N],
     len: usize,

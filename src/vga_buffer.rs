@@ -1,4 +1,5 @@
-use core::{arch::asm, cell::UnsafeCell};
+use core::cell::UnsafeCell;
+use crate::interrupts;
 
 #[repr(u8)]
 pub enum Color {
@@ -93,26 +94,6 @@ struct ScreenChar {
     color_code: ColorCode,
 }
 
-unsafe fn inb(port: u16) -> u8 {
-    let value: u8;
-    asm!(
-    "in al, dx",
-    in("dx") port,
-    out("al") value,
-    options(nomem, nostack, preserves_flags),
-    );
-    value
-}
-
-unsafe fn outb(port: u16, value: u8) {
-    asm!(
-    "out dx, al",
-    in("dx") port,
-    in("al") value,
-    options(nomem, nostack, preserves_flags),
-    );
-}
-
 pub const BUFFER_HEIGHT: usize = 25;
 pub const BUFFER_WIDTH: usize = 80;
 pub const VGA_BUFFER_ADDRESS: usize = 0xb8000;
@@ -133,10 +114,10 @@ impl Writer {
     fn set_cursor_position(&self) {
         let position = self.row * BUFFER_WIDTH + self.column;
         unsafe {
-            outb(0x3D4, 0x0F);
-            outb(0x3D5, (position & 0xFF) as u8);
-            outb(0x3D4, 0x0E);
-            outb(0x3D5, ((position >> 8) & 0xFF) as u8);
+            interrupts::outb(0x3D4, 0x0F);
+            interrupts::outb(0x3D5, (position & 0xFF) as u8);
+            interrupts::outb(0x3D4, 0x0E);
+            interrupts::outb(0x3D5, ((position >> 8) & 0xFF) as u8);
         }
     }
 
@@ -262,4 +243,33 @@ pub fn backspace(color_code: ColorCode) {
         writer.color_code = color_code;
         writer.backspace();
     });
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::vga_buffer::_print(format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($fmt:expr) => ($crate::print!(concat!($fmt, "\n")));
+    ($fmt:expr, $($arg:tt)*) => ($crate::print!(concat!($fmt, "\n"), $($arg)*));
+}
+
+#[doc(hidden)]
+pub fn _print(args: core::fmt::Arguments) {
+    use core::fmt::Write;
+    WRITER.with(|writer| {
+        writer.write_fmt(args).unwrap();
+    });
+}
+
+impl core::fmt::Write for Writer {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        for byte in s.bytes() {
+            self.write_byte(byte);
+        }
+        Ok(())
+    }
 }
