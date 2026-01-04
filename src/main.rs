@@ -10,6 +10,13 @@ mod history;
 mod simple_string;
 mod interrupts;
 mod paging;
+mod gdt;         // GDT + TSS + IST for robust exception handling
+// Scaffolding modules for upcoming features. You can hook them up gradually.
+mod serial;      // COM1 (16550) serial output – TODO implement init/write
+mod logger;      // log::Log backend – TODO route logs to VGA/serial
+mod exceptions;  // Exception handlers (page fault, GPF, etc.) – TODO register in IDT
+mod time;        // PIT timer + uptime ticks – TODO program PIT and count ticks
+mod panic_print; // Panic pretty-printer – TODO print panic info to screen/serial
 
 use core::panic::PanicInfo;
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
@@ -27,12 +34,21 @@ const KERNEL_MAP_LIMIT: u64 = 0x0020_0000;
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
+    // Load GDT/TSS early so IDT can reference valid selectors/IST.
+    gdt::init();
     interrupts::init();
     init_paging(boot_info);
-    shell::bootstrap(VERSION);
+    // Initialize serial/logging
+    serial::init_unsafe_16550_default();
+    // logger::init(log::LevelFilter::Info);
+    // Program PIT for periodic timer ticks.
+    time::init_pit(100);
+    shell::bootstrap(VERSION, boot_info);
 }
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
+    // TODO: Print panic information in a readable way (screen + serial).
+    // panic_print::print(_info);
     loop {}
 }
 

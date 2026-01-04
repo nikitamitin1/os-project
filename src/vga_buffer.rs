@@ -161,9 +161,9 @@ impl Writer {
                 }
             }
         }
-        self.clear_row(BUFFER_HEIGHT - 1);
-        self.row = BUFFER_HEIGHT - 1;
-        self.column = 0;
+        self.clear_row(BUFFER_HEIGHT - 2);
+        self.row = BUFFER_HEIGHT - 2;
+        self.column = 1;
     }
 
     fn clear_row(&mut self, row: usize) {
@@ -172,7 +172,7 @@ impl Writer {
             color_code: self.color_code,
         };
         let buffer_ptr = self.buffer;
-        for col in 0..BUFFER_WIDTH {
+        for col in 1..BUFFER_WIDTH {
             unsafe {
                 (*buffer_ptr).chars[row][col] = blank;
             }
@@ -180,19 +180,19 @@ impl Writer {
     }
 
     fn backspace(&mut self) {
-        if self.row == 0 && self.column == 0 {
+        if self.row == 1 && self.column == 0 {
             return;
         }
 
-        if self.column == 0 {
-            if self.row > 0 {
-                self.row -= 1;
+        if self.column == 1 {
+            if self.row > 1 {
+                self.row -= 2;
                 self.column = BUFFER_WIDTH;
             }
         }
 
-        if self.column > 0 {
-            self.column -= 1;
+        if self.column > 1 {
+            self.column -= 2;
         }
 
         let buffer_ptr = self.buffer;
@@ -218,7 +218,7 @@ impl GlobalWriter {
         F: FnOnce(&mut Writer) -> R,
     {
         // SAFETY: OS kernel runs on a single core without preemption yet.
-        unsafe { f(&mut *self.0.get()) }
+        unsafe { f(&mut *self.0.get())}
     }
 }
 
@@ -226,8 +226,8 @@ unsafe impl Sync for GlobalWriter {}
 
 static WRITER: GlobalWriter = GlobalWriter::new(Writer {
     color_code: ColorCode::new(Color::White, Color::Black),
-    row: 0,
-    column: 0,
+    row: 1,
+    column: 1,
     buffer: VGA_BUFFER_ADDRESS as *mut Buffer,
 });
 
@@ -242,6 +242,21 @@ pub fn backspace(color_code: ColorCode) {
     WRITER.with(|writer| {
         writer.color_code = color_code;
         writer.backspace();
+    });
+}
+
+/// Clear the entire screen and reset cursor to (1,0).
+///
+/// TODO (you implement): iterate rows 1..BUFFER_HEIGHT and call writer.clear_row(row),
+/// then set writer.row=1, writer.column=0 and update cursor position.
+pub fn clear_screen() {
+    WRITER.with(|writer| {
+        for row in 1..BUFFER_HEIGHT {
+            writer.clear_row(row);
+        }
+        writer.row = 1;
+        writer.column = 1;
+        writer.set_cursor_position();
     });
 }
 

@@ -5,6 +5,8 @@ use crate::{
     simple_string::FixedString,
     vga_buffer::{self, get_color_code, Color},
 };
+use crate::println;
+use bootloader::{BootInfo, bootinfo::MemoryRegionType};
 use core::hint::spin_loop;
 
 const INPUT_BUFFER_LEN: usize = 128;
@@ -16,6 +18,7 @@ pub struct Shell {
     history: InputHistory,
     saved_line: FixedString<INPUT_BUFFER_LEN>,
     saved_line_active: bool,
+    boot_info: &'static BootInfo,
 }
 
 enum CommandToExecute<'a> {
@@ -24,6 +27,15 @@ enum CommandToExecute<'a> {
     Diff { a: i64, b: i64 },
     Min { a: i64, b: i64 },
     Max { a: i64, b: i64 },
+    // Scaffolding for upcoming shell commands
+    Help,
+    Clear,
+    Echo { msg: &'a str },
+    MemInfo,
+    Uptime,
+    PfTest,
+    GpTest,
+    DfTest,
     Exit,
 }
 
@@ -46,10 +58,25 @@ enum HistoryKey {
 }
 
 fn command_parser<'a>(input: &'a str) -> Result<CommandToExecute<'a>, CommandError> {
-    let mut parts = input.trim().split_whitespace();
+    let trimmed = input.trim();
+
+    // Special-case: echo should preserve the remainder of the line as-is
+    if let Some(rest) = trimmed.strip_prefix("echo") {
+        let msg = rest.trim_start();
+        return Ok(CommandToExecute::Echo { msg });
+    }
+
+    let mut parts = trimmed.split_whitespace();
     let cmd = parts.next().ok_or(CommandError::UnknownCommand)?;
 
     match cmd {
+        "help" => Ok(CommandToExecute::Help),
+        "clear" => Ok(CommandToExecute::Clear),
+        "meminfo" => Ok(CommandToExecute::MemInfo),
+        "uptime" => Ok(CommandToExecute::Uptime),
+        "pf" | "pagefault" => Ok(CommandToExecute::PfTest),
+        "gp" | "gpf" => Ok(CommandToExecute::GpTest),
+        "df" | "doublefault" => Ok(CommandToExecute::DfTest),
         "greet" => {
             let name = parts.next().unwrap_or("stranger");
             Ok(CommandToExecute::Greet { name })
@@ -114,7 +141,7 @@ pub fn print_command_output(output: &str) {
 }
 
 impl Shell {
-    fn new() -> Self {
+    fn new(boot_info: &'static BootInfo) -> Self {
         Shell {
             buffer: [0; INPUT_BUFFER_LEN],
             len: 0,
@@ -122,6 +149,7 @@ impl Shell {
             history: InputHistory::new(),
             saved_line: FixedString::new(),
             saved_line_active: false,
+            boot_info,
         }
     }
 
@@ -329,6 +357,70 @@ impl Shell {
 
     fn execute_command<'a>(&self, command: CommandToExecute<'a>) -> CommandResult {
         match command {
+            CommandToExecute::Help => {
+                // TODO: expand help once commands are implemented.
+                print_command_output("Available commands:\n");
+                print_command_output("  help          - show this help\n");
+                print_command_output("  clear         - clear the screen\n");
+                print_command_output("  echo <text>   - print text\n");
+                print_command_output("  meminfo       - show memory summary\n");
+                print_command_output("  uptime        - show uptime\n");
+                print_command_output("  pf            - trigger a page fault (test)\n");
+                print_command_output("  gp            - trigger a general-protection fault (test)\n");
+                print_command_output("  greet <name>  - friendly greeting\n");
+                print_command_output("  sum/diff/min/max <a> <b>\n");
+                print_command_output("  exit          - exit shell (halt loop)\n");
+                CommandResult::Success
+            }
+            CommandToExecute::Clear => {
+                vga_buffer::clear_screen();
+                CommandResult::Success
+            }
+            CommandToExecute::Echo { msg } => {
+                print_command_output(msg);
+                print_command_output("\n");
+                CommandResult::Success
+            }
+            CommandToExecute::MemInfo => {
+                self.print_meminfo();
+                CommandResult::Success
+            }
+            CommandToExecute::Uptime => {
+                self.print_uptime();
+                CommandResult::Success
+            }
+            CommandToExecute::PfTest => {
+                print_command_output("Triggering page fault...\n");
+                // Try a high canonical address that should be unmapped; if it doesn't fault,
+                // fall back to a low address beyond our identity mapping.
+                unsafe {
+                    let ptr_hi = 0x4000_0000_0000 as *const u64;
+                    core::ptr::read_volatile(ptr_hi);
+                }
+                unsafe {
+                    let ptr_lo = 0x0020_0000 as *const u64;
+                    core::ptr::read_volatile(ptr_lo);
+                }
+                // If we reached this point, no fault occurred at either address.
+                print_command_output("No page fault triggered (addresses likely mapped).\n");
+                CommandResult::Success
+            }
+            CommandToExecute::GpTest => {
+                print_command_output("Triggering general protection fault...\\n");
+                // Non-canonical address should cause #GP
+                unsafe {
+                    let bad = 0x0000_8000_0000_0000u64 as *const u64;
+                    core::ptr::read_volatile(bad);
+                }
+                print_command_output("No GP triggered (unexpected).\\n");
+                CommandResult::Success
+            }
+            CommandToExecute::DfTest => {
+                print_command_output("Triggering double fault via nested page fault...\n");
+                // Arm DF in PF handler, then provoke PF to escalate to DF
+                crate::exceptions::trigger_double_fault_via_page_fault();
+                CommandResult::Success
+            }
             CommandToExecute::Greet { name } => {
                 let mut msg = FixedString::<64>::new();
                 let _ = msg.push_str("Hello, ");
@@ -404,12 +496,38 @@ impl Shell {
             spin_loop();
         }
     }
+
+    fn print_meminfo(&self) {
+        let mut usable_bytes: u64 = 0;
+        let mut total_regions: usize = 0;
+        for region in self.boot_info.memory_map.iter() {
+            total_regions += 1;
+            if region.region_type == MemoryRegionType::Usable {
+                let size = region.range.end_addr().saturating_sub(region.range.start_addr());
+                usable_bytes = usable_bytes.saturating_add(size);
+            }
+        }
+        let mib = (usable_bytes / (1024 * 1024)) as u64;
+        println!(
+            "meminfo: usable={} MiB ({} bytes), regions={}",
+            mib,
+            usable_bytes,
+            total_regions
+        );
+    }
+
+    fn print_uptime(&self) {
+        let ticks = crate::time::uptime_ticks();
+        let hz = crate::time::frequency_hz();
+        let ms = crate::time::uptime_ms();
+        println!("uptime: {} ms (ticks={} @ {} Hz)", ms, ticks, hz);
+    }
 }
 
-pub fn bootstrap(os_version: &str) -> ! {
+pub fn bootstrap(os_version: &str, boot_info: &'static BootInfo) -> ! {
     print_hello();
     print_os_version(os_version);
     print_string("\n", get_color_code(Color::White, Color::Black));
-    let mut shell = Shell::new();
+    let mut shell = Shell::new(boot_info);
     shell.run()
 }

@@ -10,7 +10,7 @@ use x86_64::instructions::segmentation::Segment;
 use x86_64::registers::segmentation::CS;
 use x86_64::structures::idt::InterruptStackFrame;
 
-use crate::{keyboard, println};
+use crate::{exceptions, keyboard, println};
 
 
 /// Represents the layout of a single IDT entry (interrupt gate).
@@ -45,6 +45,14 @@ impl IdtEntry {
         entry
     }
 
+    /// Create an interrupt gate entry and assign an IST (1..=7). 0 disables IST.
+    pub fn new_with_ist(handler: usize, ist: u8) -> Self {
+        let mut entry = Self::new(handler);
+        let ist = (ist as u16) & 0x0007;
+        entry.options = (entry.options & !0x0007) | ist;
+        entry
+    }
+
     fn set_handler(&mut self, handler: usize) {
         self.offset_low = handler as u16;
         self.offset_mid = (handler >> 16) as u16;
@@ -71,6 +79,16 @@ pub fn init() {
             IdtEntry::new(timer_interrupt_handler as *const () as usize);
         IDT[InterruptIndex::Keyboard as usize] =
             IdtEntry::new(keyboard_interrupt_handler as *const () as usize);
+
+        // Register key exception handlers
+        IDT[14] = IdtEntry::new(exceptions::page_fault_handler as *const () as usize);
+        IDT[13] = IdtEntry::new(exceptions::gpf_handler as *const () as usize);
+        // После реализации GDT+TSS включаем #DF с IST=1
+        IDT[8] = IdtEntry::new_with_ist(
+            exceptions::double_fault_handler as *const () as usize,
+            crate::gdt::DOUBLE_FAULT_IST_INDEX_FOR_IDT as u8,
+        );
+        // IDT[13] = IdtEntry::new(exceptions::gpf_handler as usize);
 
         remap_pic();
         load_idt(ptr::addr_of!(IDT).cast(), IDT_LEN);
@@ -112,7 +130,7 @@ unsafe fn remap_pic() {
 
         outb(0x21, 0x20);
         io_wait();
-        outb(0xA1, 0x28);
+        outb(0xA1, 0x28); 
         io_wait();
 
         outb(0x21, 4);
@@ -183,6 +201,7 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
     unsafe {
         send_eoi(InterruptIndex::Timer as u8);
     }
+    crate::time::tick();
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
